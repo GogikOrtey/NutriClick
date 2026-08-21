@@ -38,6 +38,8 @@ NutriSnap_Twin_bot/
 ├── .reminder_day_keys.json  # Локальный ключ сброса is_triggered_today (не в git; volume)
 ├── .reminder_pending_meal.json  # Отложенные после пропуска «на ближайший приём» (volume)
 ├── cursorcontext_on_SkyNode.md  # SSH/VPS шпаргалка (SkyNode)
+├── DEPLOY_PLAYBOOK_SkyNode.md   # Полная инструкция: сборка/деплой + шаблон для нового проекта на SkyNode
+├── BOT_REPLICA_BLUEPRINT.md     # Единый blueprint для сборки похожего бота под другую тему (архитектура+алгоритмы+деплой)
 ├── backlog.md             # Личный бэклог (не править агентом)
 └── Старое/                # Устаревшие эксперименты (не использовать как основу)
 ```
@@ -252,6 +254,8 @@ main.py
 
 ## Деплой SkyNode (ветка `build` + GitHub Actions)
 
+- Полный playbook для агента (как собрали + как повторить для нового проекта): `DEPLOY_PLAYBOOK_SkyNode.md`.
+- Документ для быстрого старта похожего проекта под другую тематику: `BOT_REPLICA_BLUEPRINT.md`.
 - Каталог на VPS: `~/NutriSnap_Twin_bot` (ветка `build`).
 - Локально: `deploy_to_build.cmd` → commit (если нужно) → merge в `build` → `git push origin build` → обратно на рабочую ветку.
 - Actions (`.github/workflows/deploy.yml`): `push` на `build` → SSH (`appleboy/ssh-action`) → `bash deploy.sh`.
