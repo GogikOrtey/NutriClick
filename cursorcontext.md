@@ -10,7 +10,7 @@ Telegram-бот для учёта калорий по фото/тексту (Nut
 
 ```
 NutriSnap_Twin_bot/
-├── main.py                # Точка входа: /start, меню, обёртки БД, роутеры
+├── main.py                # Точка входа: /start, меню, обёртки БД, роутеры 
 ├── app_logging.py         # Логи: консоль + logs/bot.log (ротация)
 ├── error_notify.py        # Ошибки → лог + SMTP-письмо 🟨⬛🍎 на FEEDBACK_TO_EMAIL
 ├── proxy_config.py        # Точечный HTTPS-прокси для Telegram + Gemini (VPS)
