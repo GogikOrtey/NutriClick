@@ -13,12 +13,20 @@ git reset --hard origin/build
 
 echo "==> prepare volumes"
 mkdir -p logs
-if [[ ! -f .reminder_day_keys.json ]]; then
-  echo '{}' > .reminder_day_keys.json
-fi
-if [[ ! -f .reminder_pending_meal.json ]]; then
-  echo '{}' > .reminder_pending_meal.json
-fi
+# Bind-mounts в compose: если файла нет, Docker создаёт каталог → deploy/контейнер ломаются.
+# Нужна именно для: ensure_bind_file (ниже) и вызовов в этом скрипте перед compose up.
+ensure_bind_file() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    echo "WARN: $path is a directory (Docker bind artifact) — replacing with JSON file"
+    rm -rf "$path"
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo '{}' > "$path"
+  fi
+}
+ensure_bind_file .reminder_day_keys.json
+ensure_bind_file .reminder_pending_meal.json
 
 if [[ ! -f .env ]]; then
   echo "ERROR: .env not found in $ROOT — copy secrets before deploy." >&2

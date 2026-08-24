@@ -88,7 +88,7 @@ main.py
 - Defer после пропуска: `defer_reminder_to_next_meal` пишет в `.reminder_pending_meal.json` (`reminder_id → user_id/time_start/min_calories/missed_on`), `is_triggered_today` не сбрасывает. `trigger_reminders_for_food` шлёт уведомление на ближайшую еду вне окна (по `min_calories`). Если до `time_start` следующего логического дня еды не было — silent expire (ничего в чат), окно снова активное.
 - Food logs retention (`food_logs_cleanup_loop`, раз в сутки / 86400 с, старт sleep 55 с): `delete_food_logs_older_than(FOOD_LOG_RETENTION_DAYS=100)` — удаляет записи с `logged_date` &lt; today_UTC−100; в лог пишет число удалённых.
 - Профиль: «🔄 Обновить данные пользователя» → `start_initial_survey`. Смена goal → пересчёт ккал через `resolve_recommended_calories` (Mifflin–St Jeor + Gemini fallback).
-- Версия бота: константа `BOT_VERSION` (`v1.0.0`) в `main.py`; Настройки → «🔩 Для разработчика» → сообщение «Версия бота: …».
+- Версия бота: константа `BOT_VERSION` (`v1.0.3`) в `main.py`; Настройки → «🔩 Для разработчика» → сообщение «Версия бота: …».
 - ReplyKeyboard / Inline / логическая дата / FAQ / SMTP feedback — без изменений UX.
 - Тарифы (`💎 Тарифы` под дневником): `show_tariffs` / `show_tariff_pay` / `kb_tariffs` / `kb_tariff_pay`; бесплатный (текст «уже активирован») / премиум → оплата 99 ₽ на 30 дней + HTML-ссылки оферта/политика (плейсхолдеры telegra.ph); «Оплатить» — заглушка + возврат в тарифы (`report_console_error` при сбое); `💬 Поддержка` → `MenuFlow.support_wait` → SMTP (`kind=support`, в письме `https://t.me/user?id=…`). 🎈 ЮKassa, картинка достоинств, реальные юрдоки, премиум в NocoDB, лимит 10 распознаваний/сутки в `food_recognition.py` — ещё нет.
 - `main()`: `setup_logging` + `install_error_email_hooks` + `attach_asyncio_error_handler` + `usage_reminder_loop` + `reminders_maintenance_loop` + `food_logs_cleanup_loop` перед polling.
@@ -247,7 +247,8 @@ main.py
 ## Docker (локально Windows / VPS)
 
 - `Dockerfile`: `python:3.10-slim` (паритет с локальной 3.10.10), `CMD ["python", "main.py"]`, `PYTHONUNBUFFERED=1`.
-- `docker-compose.yml`: сервис `bot`, `env_file: .env`, volumes `./logs`, `./.reminder_day_keys.json`, `./.reminder_pending_meal.json` (файлы на хосте должны существовать до первого `up`; `deploy.sh` создаёт пустые `{}`).
+- `docker-compose.yml`: сервис `bot`, `env_file: .env`, volumes `./logs`, `./.reminder_day_keys.json`, `./.reminder_pending_meal.json` (файлы на хосте должны существовать до первого `up`; иначе Docker создаёт **каталог** вместо файла).
+- `deploy.sh` → `ensure_bind_file`: если путь — каталог (артефакт bind-mount), удаляет и пишет `{}`; иначе создаёт файл при отсутствии.
 - `docker-compose.vps.yml`: `network_mode: host` — контейнер видит mihomo `127.0.0.1:7890` и `/etc/hosts` хоста.
 - Локальный тест: `docker compose up --build` (без vps-файла). Прокси в `.env` пустой.
 - VPS: `docker compose -f docker-compose.yml -f docker-compose.vps.yml up --build -d`.
@@ -261,7 +262,8 @@ main.py
 - Локально: `deploy_to_build.cmd` → commit (если нужно) → merge в `build` → `git push origin build` → обратно на рабочую ветку.
 - Actions (`.github/workflows/deploy.yml`): `push` на `build` → SSH (`appleboy/ssh-action`) → `bash deploy.sh`.
 - Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_DEPLOY_PATH` (`/home/gogortey/NutriSnap_Twin_bot`).
-- Ключи на VPS: `~/.ssh/nutrisnap_github` (deploy key RO → GitHub), `~/.ssh/nutrisnap_gha` (Actions → VM, в `authorized_keys`).
+- Ключи на VPS: `~/.ssh/nutrisnap_github` (deploy key RO → GitHub), `~/.ssh/nutrisnap_gha` (Actions → VM, в `authorized_keys`). Рядом в `authorized_keys` могут быть ключи других проектов (`quickprocess-gha-deploy`, `trainer-admin-gha-deploy`) — на NutriSnap не влияют, если свой ключ на месте.
+- Известный сбой (2026-08-24): Actions упал на `deploy.sh` из‑за `.reminder_pending_meal.json` = каталог (root, с 2026-07-30); git на VPS обновился, контейнер остался со старым `BOT_VERSION`. Лечится `ensure_bind_file` + `up --build`.
 - Compose plugin без sudo: `~/.docker/cli-plugins/docker-compose`.
 - mihomo: `127.0.0.1:7890`; в `.env` на VPS: `OUTBOUND_HTTPS_PROXY=http://127.0.0.1:7890`.
 - Telegram + Gemini → прокси; NocoDB / SMTP / Nominatim → напрямую. Не ставить unit-wide `HTTP_PROXY` на процесс бота.
