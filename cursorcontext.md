@@ -10,7 +10,7 @@ Telegram-бот для учёта калорий по фото/тексту (Nut
 
 ```
 NutriSnap_Twin_bot/
-├── main.py                # Точка входа: /start, меню, обёртки БД, роутеры
+├── main.py                # Точка входа: /start, меню, обёртки БД, роутеры 
 ├── app_logging.py         # Логи: консоль + logs/bot.log (ротация)
 ├── error_notify.py        # Ошибки → лог + SMTP-письмо 🟨⬛🍎 на FEEDBACK_TO_EMAIL
 ├── proxy_config.py        # Точечный HTTPS-прокси для Telegram + Gemini (VPS)
@@ -38,6 +38,8 @@ NutriSnap_Twin_bot/
 ├── .reminder_day_keys.json  # Локальный ключ сброса is_triggered_today (не в git; volume)
 ├── .reminder_pending_meal.json  # Отложенные после пропуска «на ближайший приём» (volume)
 ├── cursorcontext_on_SkyNode.md  # SSH/VPS шпаргалка (SkyNode)
+├── DEPLOY_PLAYBOOK_SkyNode.md   # Полная инструкция: сборка/деплой + шаблон для нового проекта на SkyNode
+├── BOT_REPLICA_BLUEPRINT.md     # Единый blueprint для сборки похожего бота под другую тему (архитектура+алгоритмы+деплой)
 ├── backlog.md             # Личный бэклог (не править агентом)
 └── Старое/                # Устаревшие эксперименты (не использовать как основу)
 ```
@@ -81,8 +83,8 @@ main.py
 - После ✅ еды: `_on_food_saved` → `insert_food_log_from_result` (emoji в `details_json` + PATCH `users.last_food_logged_on`); затем «Учтено ✅»; затем `_on_after_food_ack` → `notify_reminders_after_food` / `trigger_reminders_for_food` (чтобы reminders шли после ack в чате).
 - Дневник «✏️ Изменить блюдо»: выбор номера → свободный текст → Gemini (`analyze_food_log_edit`) → `update_food_log` + сообщение об успехе. Удаление — сразу DELETE + «✅ Блюдо удалено».
 - `_on_survey_complete`: сразу текст про usage-reminder + inline «🟩 Хорошо»; `set_profile` стартует параллельно (`_survey_profile_saves`). По кнопке — await upsert → напоминание закрепить/положить в важную папку (`SURVEY_PIN_REMINDER_TEXT`) с inline «Жду выполнения (15)»…«(1)» → «Готово» (клик во время отсчёта игнорируется) → «всё настроено» + `show_recognize`.
-- Usage-reminder: если `usage_reminder_enabled` и до 13:00 (TZ юзера) `last_food_logged_on` ≠ логический today — фоновый `usage_reminder_loop` (раз в час, старт sleep 40 с) шлёт сообщение и пишет `usage_reminder_sent_on`. Тик: только `list_users_with_usage_reminder` (без N+1 к food_logs). Вкл/выкл: Настройки → Напоминания → «📲 Напоминание использования бота».
-- Reminders maintenance (`reminders_maintenance_loop`, тик в `:05` каждого часа серверного времени — `REMINDER_MISSED_CHECK_MINUTE=5`): `list_all_reminders` + `list_all_users` (без per-user GET) → сброс `is_triggered_today` при смене логических суток; ключ даты в `.reminder_day_keys.json`. Пропущенные окна: `now > time_end`, ещё не triggered, не frozen, не в pending → «⏰ Напоминание пропущено» + mark triggered; кнопки «➡️ Перенести на ближайший приём» (`rem:defer:`) и «✅ Понятно».
+- Usage-reminder: если `usage_reminder_enabled` и до 13:00 (TZ юзера) `last_food_logged_on` ≠ логический today — фоновый `usage_reminder_loop` (раз в час, старт sleep 40 с) шлёт сообщение и пишет `usage_reminder_sent_on`. Не слать, если `last_active_at` старше `USAGE_REMINDER_FREEZE_AFTER_DAYS` (5). Spoiler «как отключить» — примерно 1 из `USAGE_REMINDER_SPOILER_EVERY_N` (4) сообщений. Тик: только `list_users_with_usage_reminder` (без N+1 к food_logs). Вкл/выкл: Настройки → Напоминания → «📲 Напоминание использования бота».
+- Reminders maintenance (`reminders_maintenance_loop`, тик в `:05` каждого часа серверного времени — `REMINDER_MISSED_CHECK_MINUTE=5`): `list_all_reminders` + `list_all_users` (без per-user GET) → сброс `is_triggered_today` при смене логических суток; ключ даты в `.reminder_day_keys.json`. Пропущенные окна: `now > time_end`, ещё не triggered, не frozen, не в pending → «⏰ Напоминание пропущено» + mark triggered; кнопки «➡️ Перенести на ближайший приём» (`rem:defer:`) и «✅ Понятно». Тексты «🔔 Нужно» / missed — через `ensure_min_message_width(..., MIN_REMINDER_MSG_WIDTH=32)` (кнопка defer = 31 символ).
 - Defer после пропуска: `defer_reminder_to_next_meal` пишет в `.reminder_pending_meal.json` (`reminder_id → user_id/time_start/min_calories/missed_on`), `is_triggered_today` не сбрасывает. `trigger_reminders_for_food` шлёт уведомление на ближайшую еду вне окна (по `min_calories`). Если до `time_start` следующего логического дня еды не было — silent expire (ничего в чат), окно снова активное.
 - Food logs retention (`food_logs_cleanup_loop`, раз в сутки / 86400 с, старт sleep 55 с): `delete_food_logs_older_than(FOOD_LOG_RETENTION_DAYS=100)` — удаляет записи с `logged_date` &lt; today_UTC−100; в лог пишет число удалённых.
 - Профиль: «🔄 Обновить данные пользователя» → `start_initial_survey`. Смена goal → пересчёт ккал через `resolve_recommended_calories` (Mifflin–St Jeor + Gemini fallback).
@@ -94,7 +96,8 @@ main.py
 ### `app_logging.py`
 
 - `setup_logging()` — root logger: StreamHandler + RotatingFileHandler (`logs/bot.log`, 5 МБ × 5 файлов).
-- Формат: `YYYY-MM-DD HH:MM:SS | LEVEL | module | message`.
+- Формат: `YYYY-MM-DD HH:MM:SS | LEVEL | module | message`; время всегда `Asia/Yekaterinburg` (UTC+5), не TZ контейнера/VPS (`_YekaterinburgFormatter`).
+- `format_log_timestamp()` — та же зона для писем `error_notify` / feedback SMTP.
 - Уровень из `LOG_LEVEL` (по умолчанию INFO); aiogram/aiohttp/httpx/google_genai → WARNING.
 - Модули: `logger = logging.getLogger(__name__)`.
 - При тестировании на windows (cp1251): символ `→` в лог-сообщениях ломает вывод консоли (`UnicodeEncodeError`); в текстах логов использовать ASCII `->`.
@@ -252,6 +255,8 @@ main.py
 
 ## Деплой SkyNode (ветка `build` + GitHub Actions)
 
+- Полный playbook для агента (как собрали + как повторить для нового проекта): `DEPLOY_PLAYBOOK_SkyNode.md`.
+- Документ для быстрого старта похожего проекта под другую тематику: `BOT_REPLICA_BLUEPRINT.md`.
 - Каталог на VPS: `~/NutriSnap_Twin_bot` (ветка `build`).
 - Локально: `deploy_to_build.cmd` → commit (если нужно) → merge в `build` → `git push origin build` → обратно на рабочую ветку.
 - Actions (`.github/workflows/deploy.yml`): `push` на `build` → SSH (`appleboy/ssh-action`) → `bash deploy.sh`.

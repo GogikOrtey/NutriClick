@@ -82,7 +82,7 @@ from aiogram.types import (
 from dotenv import load_dotenv
 
 import db_nocodb as db
-from app_logging import setup_logging
+from app_logging import format_log_timestamp, setup_logging
 from error_notify import (
     TECH_ISSUES_USER_TEXT,
     attach_asyncio_error_handler,
@@ -96,6 +96,7 @@ from error_notify import (
 )
 from food_recognition import (
     analyze_food_log_edit,
+    ensure_min_message_width,
     parse_food_log_edit,
     setup_food_recognition,
 )
@@ -136,7 +137,7 @@ STALE_RECOVERY_TEXT = (
 )
 
 # Версия бота (кнопка «🔩 Для разработчика» в настройках).
-BOT_VERSION = "v1.0.0"
+BOT_VERSION = "v1.0.3"
 
 # Кнопка возврата в корень — есть в основных разделах.
 BTN_MAIN_MENU = "🏠 Главное меню"
@@ -263,16 +264,22 @@ USAGE_REMINDER_EMOJIS = (
 )
 
 
-# Собирает текст usage-reminder со случайным food-emoji и spoiler-строкой «Отключить…».
+# Собирает текст usage-reminder со случайным food-emoji.
+# Spoiler «Отключить…» — примерно раз в 4 сообщения (не засоряет каждый пузырь).
 # Используется в usage_reminder_loop при send_message (parse_mode=HTML).
 def get_usage_reminder_notify_text() -> str:
     emoji = random.choice(USAGE_REMINDER_EMOJIS)
-    return (
+    text = (
         f"Эй! Сегодня ещё нет ни одной записи о еде {emoji}\n"
-        "Если уже поели — загляните и зафиксируйте, это займёт минуту\n"
-        "\n"
-        "<tg-spoiler>Отключить: Настройки → Напоминания → «Напоминание использования бота»</tg-spoiler>"
+        "Если уже поели — загляните и зафиксируйте, это займёт минуту"
     )
+    if random.randint(1, USAGE_REMINDER_SPOILER_EVERY_N) == 1:
+        text += (
+            "\n\n"
+            "<tg-spoiler>Отключить: Настройки → Напоминания → "
+            "«Напоминание использования бота»</tg-spoiler>"
+        )
+    return text
 
 # Памятка экрана «Распознать» — также открывается после завершения первичного опроса.
 RECOGNIZE_HINT_TEXT = (
@@ -437,6 +444,13 @@ REMINDER_WINDOWS: dict[str, tuple[str, str]] = {
 REMINDER_HEARTY_MIN_KCAL = 250
 # Заморозка уведомлений, если пользователь не заходил N дней (users.last_active_at).
 REMINDER_FREEZE_AFTER_DAYS = 3
+# Usage-reminder («Эй! Сегодня ещё нет…») — не слать после N дней без активности.
+USAGE_REMINDER_FREEZE_AFTER_DAYS = 5
+# Spoiler «как отключить» в usage-reminder — примерно 1 из N сообщений.
+USAGE_REMINDER_SPOILER_EVERY_N = 4
+# Мин. ширина пузыря под inline reminders (символов).
+# Длиннее кнопки «➡️ Перенести на ближайший приём» (31) — иначе ряд шире текста.
+MIN_REMINDER_MSG_WIDTH = 32
 # Минута каждого часа (серверное время), когда проверяем пропущенные окна
 # и сбрасываем is_triggered_today. Окна кончаются на :00 → тик в :05.
 REMINDER_MISSED_CHECK_MINUTE = 5
@@ -1250,6 +1264,7 @@ async def send_feedback_email(
     uname = f"@{username}" if username else "—"
     subject = f"🍎 [NutriClick] {kind_label} — user {user_id}"
     body = (
+        f"Время: {format_log_timestamp()}\n"
         f"Тип: {kind_label}\n"
         f"user_id: {user_id}\n"
         f"username: {uname}\n"
@@ -1396,6 +1411,15 @@ def reminders_frozen(
     if last <= 0:
         return False
     return (time.time() - last) > REMINDER_FREEZE_AFTER_DAYS * 86400
+
+
+# True, если usage-reminder не слать: нет активности > USAGE_REMINDER_FREEZE_AFTER_DAYS.
+# Используется _collect_usage_reminder_targets (профиль уже в списке).
+def usage_reminder_frozen(user: dict[str, Any]) -> bool:
+    last = int(user.get("last_active_at") or 0)
+    if last <= 0:
+        return False
+    return (time.time() - last) > USAGE_REMINDER_FREEZE_AFTER_DAYS * 86400
 
 
 # Перенос сработавшего напоминания на следующую еду (сброс is_triggered_today).
@@ -2637,8 +2661,8 @@ async def show_tariffs(message: Message, state: FSMContext) -> None:
         state,
         "💎 Тарифы\n"
         "\n"
-        "Тариф бесплатный (базовый) — до 10 распознаваний еды в сутки\n"
-        "Премиум доступ — безлимитное распознавание фото на 1 месяц",
+        "▫️ Тариф бесплатный (базовый) — до 10 распознаваний еды в сутки\n"
+        "▫️ Премиум доступ — безлимитное распознавание фото на 1 месяц",
         reply_markup=kb_tariffs(),
     )
 
@@ -2779,7 +2803,8 @@ async def show_usage_reminder_settings(
         "\n"
         f"Если до {USAGE_REMINDER_HOUR:02d}:00 по вашему часовому поясу "
         "не будет ни одной фиксации еды — бот пришлёт мягкое напоминание. "
-        "Работает каждый день.\n"
+        "Работает каждый день; если не заходить в бота "
+        f"больше {USAGE_REMINDER_FREEZE_AFTER_DAYS} дней — не приходит.\n"
         "\n"
         f"Сейчас: {status}"
     )
@@ -2800,7 +2825,10 @@ async def notify_reminders_after_food(
     for row in triggered:
         await bot.send_message(
             chat_id,
-            f"🔔 Нужно: {row['title']}",
+            ensure_min_message_width(
+                f"🔔 Нужно: {row['title']}",
+                min_width=MIN_REMINDER_MSG_WIDTH,
+            ),
             reply_markup=kb_reminder_notify(int(row["id"])),
         )
 
@@ -3325,7 +3353,7 @@ async def on_tariff_support(message: Message, state: FSMContext) -> None:
         "\n"
         "Если у вас возникли вопросы или сложности при оплате — "
         "напишите нам. Можно прикрепить один скриншот "
-        "(удобнее всего — фото с подписью).",
+        "(удобнее всего — фото с подписью)",
         reply_markup=kb_nav_only(),
     )
 
@@ -4168,7 +4196,7 @@ async def on_feedback_bug(message: Message, state: FSMContext) -> None:
         "🐞 Сообщить об ошибке\n"
         "\n"
         "Опишите проблему текстом. Можно прикрепить один скриншот "
-        "(удобнее всего — фото с подписью).\n",
+        "(удобнее всего — фото с подписью)\n",
         reply_markup=kb_nav_only(),
     )
 
@@ -4184,7 +4212,7 @@ async def on_feedback_idea(message: Message, state: FSMContext) -> None:
         "💡 Предложение по улучшению функционала\n"
         "\n"
         "Напишите идею текстом. Можно прикрепить один скриншот "
-        "(удобнее всего — фото с подписью).\n",
+        "(удобнее всего — фото с подписью)\n",
         reply_markup=kb_nav_only(),
     )
 
@@ -4841,8 +4869,8 @@ async def on_survey_pin_done(callback: CallbackQuery, state: FSMContext) -> None
 #endregion
 
 #region Usage-reminder (фон: нет еды до 13:00)
-# Кандидаты: enabled, локальное время ≥ 13:00, ещё не слали сегодня,
-# last_food_logged_on != логический today. Sync — из to_thread.
+# Кандидаты: enabled, не frozen по last_active_at (5 дней), локальное время ≥ 13:00,
+# ещё не слали сегодня, last_food_logged_on != логический today. Sync — из to_thread.
 # Без N+1 к food_logs: флаг пишется при INSERT еды.
 # Используется usage_reminder_loop.
 def _collect_usage_reminder_targets() -> list[tuple[int, str]]:
@@ -4854,6 +4882,8 @@ def _collect_usage_reminder_targets() -> list[tuple[int, str]]:
         return []
     for user in users:
         try:
+            if usage_reminder_frozen(user):
+                continue
             tz_name = str(user.get("timezone") or "Europe/Moscow")
             tz = ZoneInfo(tz_name)
             now = datetime.now(tz)
@@ -4901,15 +4931,16 @@ async def usage_reminder_loop(bot: Bot) -> None:
 #endregion
 
 #region Reminders maintenance (сброс суток + пропущенные окна)
-# Текст уведомления о пропущенном окне напоминания.
+# Текст уведомления о пропущенном окне напоминания (с паддингом под inline-кнопки).
 # Используется reminders_maintenance_loop.
 def format_missed_reminder_text(row: dict[str, Any]) -> str:
     title = html.escape(str(row.get("title") or "напоминание"))
     start = html.escape(str(row.get("time_start") or "—"))
     end = html.escape(str(row.get("time_end") or "—"))
-    return (
+    return ensure_min_message_width(
         f"⏰ Напоминание пропущено: <b>{title}</b>\n"
-        f"Окно {start}–{end} закончилось без фиксации еды"
+        f"Окно {start}–{end} закончилось без фиксации еды",
+        min_width=MIN_REMINDER_MSG_WIDTH,
     )
 
 

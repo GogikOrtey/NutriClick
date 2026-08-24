@@ -8,6 +8,7 @@ error_notify.py — письма разработчику и UX при сбоя�
 2) Сбои БД / Gemini / сети → то же + префикс 🟧🍎 и текст пользователю
    в чате (report_service_problem / TECH_ISSUES_USER_TEXT).
 SMTP без прокси. При сбое отправки письма — только лог, без рекурсии.
+Время в письме — Asia/Yekaterinburg (UTC+5), как в app_logging.
 """
 
 from __future__ import annotations
@@ -22,11 +23,12 @@ import threading
 import time
 import traceback
 import urllib.error
-from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from typing import Any
 
 from dotenv import load_dotenv
+
+from app_logging import format_log_timestamp
 
 load_dotenv()
 
@@ -130,7 +132,7 @@ def _emit_error_email(
     if not _should_email(f"{subject_prefix}\n{full}"):
         return full
 
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    ts = format_log_timestamp()
     subject = f"{subject_prefix} [NutriClick] {subject_label}"
     body = f"Время: {ts}\n\n{full}\n"
     _send_email_async(subject, body)
