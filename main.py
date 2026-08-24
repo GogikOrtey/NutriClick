@@ -30,7 +30,8 @@ FAQ в настройках — обзор возможностей и отве�
    reminders_maintenance (сброс is_triggered_today + пропущенные окна)
    и food_logs_cleanup (удаление записей с logged_date старше 100 дней);
    Telegram-сессия через прокси при TELEGRAM_PROXY / OUTBOUND_HTTPS_PROXY
-   (VPS mihomo), иначе напрямую.
+   (VPS mihomo), иначе напрямую. Фоновые send_message — через
+   bot_send_message_retry (3 попытки при TelegramNetworkError).
 8. DropStaleMessagesMiddleware — сообщения старше 10 мин (очередь после
    даунтайма) не обрабатываются; чату один раз пишется, что бот снова онлайн.
 9. Главный экран: после 15 мин без смены экрана — inline «🔄 Обновить»
@@ -63,6 +64,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import CommandStart, ExceptionTypeFilter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -137,7 +139,7 @@ STALE_RECOVERY_TEXT = (
 )
 
 # Версия бота (кнопка «🔩 Для разработчика» в настройках).
-BOT_VERSION = "v1.0.4"
+BOT_VERSION = "v1.0.5"
 
 # Кнопка возврата в корень — есть в основных разделах.
 BTN_MAIN_MENU = "🏠 Главное меню"
@@ -240,6 +242,10 @@ USAGE_REMINDER_HOUR = 13
 # Фоновый тик раз в час (как reminders_maintenance): разные TZ —
 # почасовой шаг проще точечной минуты; старт со sleep-оффсетом от maintenance.
 USAGE_REMINDER_CHECK_INTERVAL_SEC = 3600
+# Ретраи bot.send_message при TelegramNetworkError (прокси/TLS blip).
+# Всего попыток; паузы между ними (сек) — по индексу неудачи.
+TG_SEND_RETRY_ATTEMPTS = 3
+TG_SEND_RETRY_DELAYS_SEC = (2.0, 5.0)
 SURVEY_USAGE_REMINDER_TEXT = (
     "Мы добавили напоминание об использовании бота 🙂\n"
     "\n"
@@ -4869,6 +4875,33 @@ async def on_survey_pin_done(callback: CallbackQuery, state: FSMContext) -> None
 #endregion
 
 #region Usage-reminder (фон: нет еды до 13:00)
+# send_message с ретраями на TelegramNetworkError (SOCKS/TLS сброс на VPS).
+# Используется usage_reminder_loop и reminders_maintenance_loop.
+async def bot_send_message_retry(bot: Bot, *args: Any, **kwargs: Any) -> Message:
+    last_exc: BaseException | None = None
+    for attempt in range(TG_SEND_RETRY_ATTEMPTS):
+        try:
+            return await bot.send_message(*args, **kwargs)
+        except TelegramNetworkError as e:
+            last_exc = e
+            if attempt >= TG_SEND_RETRY_ATTEMPTS - 1:
+                break
+            delay = TG_SEND_RETRY_DELAYS_SEC[
+                min(attempt, len(TG_SEND_RETRY_DELAYS_SEC) - 1)
+            ]
+            logger.warning(
+                "send_message TelegramNetworkError attempt %s/%s, "
+                "retry in %.0fs: %s",
+                attempt + 1,
+                TG_SEND_RETRY_ATTEMPTS,
+                delay,
+                e,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 # Кандидаты: enabled, не frozen по last_active_at (5 дней), локальное время ≥ 13:00,
 # ещё не слали сегодня, last_food_logged_on != логический today. Sync — из to_thread.
 # Без N+1 к food_logs: флаг пишется при INSERT еды.
@@ -4914,7 +4947,8 @@ async def usage_reminder_loop(bot: Bot) -> None:
             targets = await asyncio.to_thread(_collect_usage_reminder_targets)
             for user_id, today in targets:
                 try:
-                    await bot.send_message(
+                    await bot_send_message_retry(
+                        bot,
                         user_id,
                         get_usage_reminder_notify_text(),
                         parse_mode="HTML",
@@ -5012,7 +5046,8 @@ async def reminders_maintenance_loop(bot: Bot) -> None:
             targets = await asyncio.to_thread(_collect_missed_reminder_targets)
             for user_id, row in targets:
                 try:
-                    await bot.send_message(
+                    await bot_send_message_retry(
+                        bot,
                         user_id,
                         format_missed_reminder_text(row),
                         parse_mode="HTML",
