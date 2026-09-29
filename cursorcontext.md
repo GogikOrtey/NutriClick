@@ -1,6 +1,6 @@
-# NutriSnap Twin Bot — контекст проекта
+# NutriClick — контекст проекта
 
-Telegram-бот для учёта калорий по фото/тексту (NutriSnap). Актуальная точка входа: `main.py`. Распознавание еды — в `food_recognition.py`.
+Telegram-бот для учёта калорий по фото/тексту (NutriClick). Репозиторий GitHub: `GogikOrtey/NutriClick`. Актуальная точка входа: `main.py`. Распознавание еды — в `food_recognition.py`.
 
 ## Назначение
 
@@ -9,7 +9,7 @@ Telegram-бот для учёта калорий по фото/тексту (Nut
 ## Структура
 
 ```
-NutriSnap_Twin_bot/
+NutriClick/
 ├── main.py                # Точка входа: /start, меню, обёртки БД, роутеры 
 ├── app_logging.py         # Логи: консоль + logs/bot.log (ротация)
 ├── error_notify.py        # Ошибки → лог + SMTP-письмо 🟨⬛🍎 на FEEDBACK_TO_EMAIL
@@ -258,7 +258,7 @@ main.py
 
 - Полный playbook для агента (как собрали + как повторить для нового проекта): `DEPLOY_PLAYBOOK_SkyNode.md`.
 - Документ для быстрого старта похожего проекта под другую тематику: `BOT_REPLICA_BLUEPRINT.md`.
-- Каталог на VPS: `~/NutriSnap_Twin_bot` (ветка `build`).
+- GitHub: `GogikOrtey/NutriClick` (старое имя `NutriSnap_Twin_bot` редиректит). Каталог на VPS по-прежнему `~/NutriSnap_Twin_bot` (ветка `build`).
 - Локально: `deploy_to_build.cmd` → commit (если нужно) → merge в `build` → `git push origin build` → обратно на рабочую ветку.
 - Actions (`.github/workflows/deploy.yml`): `push` на `build` → SSH (`appleboy/ssh-action`) → `bash deploy.sh`.
 - Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_DEPLOY_PATH` (`/home/gogortey/NutriSnap_Twin_bot`).
