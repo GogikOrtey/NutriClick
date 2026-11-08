@@ -32,6 +32,8 @@ FAQ в настройках — обзор возможностей и отве�
    Telegram-сессия через прокси при TELEGRAM_PROXY / OUTBOUND_HTTPS_PROXY
    (VPS mihomo), иначе напрямую. Фоновые send_message — через
    bot_send_message_retry (3 попытки при TelegramNetworkError).
+   TelegramForbiddenError (бот заблокирован / чат недоступен) — лог без письма;
+   usage-reminder при этом выключается.
 8. DropStaleMessagesMiddleware — сообщения старше 10 мин (очередь после
    даунтайма) не обрабатываются; чату один раз пишется, что бот снова онлайн.
 9. Главный экран: после 15 мин без смены экрана — inline «🔄 Обновить»
@@ -64,7 +66,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError
 from aiogram.filters import CommandStart, ExceptionTypeFilter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -139,7 +141,7 @@ STALE_RECOVERY_TEXT = (
 )
 
 # Версия бота (кнопка «🔩 Для разработчика» в настройках).
-BOT_VERSION = "v1.0.5"
+BOT_VERSION = "v1.0.6"
 
 # Кнопка возврата в корень — есть в основных разделах.
 BTN_MAIN_MENU = "🏠 Главное меню"
@@ -4875,7 +4877,39 @@ async def on_survey_pin_done(callback: CallbackQuery, state: FSMContext) -> None
 #endregion
 
 #region Usage-reminder (фон: нет еды до 13:00)
+# True, если чат недоступен: пользователь заблокировал бота, аккаунт удалён
+# или бот не может начать диалог. Это не сбой сервиса.
+# Используется фоновыми usage/missed-рассылками (лог без SMTP).
+def telegram_user_unreachable(exc: BaseException) -> bool:
+    return isinstance(exc, TelegramForbiddenError)
+
+
+# Пользователь недоступен для фоновой рассылки: info-лог, без письма.
+# disable_usage — выключить usage_reminder_enabled, чтобы часовой цикл
+# не повторял send_message. Используется usage_reminder_loop
+# и reminders_maintenance_loop.
+async def _skip_unreachable_background_send(
+    user_id: int,
+    where: str,
+    exc: BaseException,
+    *,
+    disable_usage: bool,
+) -> None:
+    logger.info("%s skipped, user unreachable user_id=%s: %s", where, user_id, exc)
+    if not disable_usage:
+        return
+    try:
+        await run_db(set_usage_reminder_enabled, user_id, False)
+    except Exception as disable_exc:
+        logger.warning(
+            "disable usage reminder after unreachable failed user_id=%s: %s",
+            user_id,
+            disable_exc,
+        )
+
+
 # send_message с ретраями на TelegramNetworkError (SOCKS/TLS сброс на VPS).
+# TelegramForbiddenError не ретраится — это не сеть.
 # Используется usage_reminder_loop и reminders_maintenance_loop.
 async def bot_send_message_retry(bot: Bot, *args: Any, **kwargs: Any) -> Message:
     last_exc: BaseException | None = None
@@ -4955,6 +4989,23 @@ async def usage_reminder_loop(bot: Bot) -> None:
                     )
                     await run_db(mark_usage_reminder_sent, user_id, today)
                 except Exception as e:
+                    if telegram_user_unreachable(e):
+                        await _skip_unreachable_background_send(
+                            user_id,
+                            "usage reminder",
+                            e,
+                            disable_usage=True,
+                        )
+                        try:
+                            await run_db(mark_usage_reminder_sent, user_id, today)
+                        except Exception as mark_exc:
+                            logger.warning(
+                                "mark usage reminder sent after unreachable "
+                                "failed user_id=%s: %s",
+                                user_id,
+                                mark_exc,
+                            )
+                        continue
                     report_console_error(
                         f"usage reminder send failed user_id={user_id}: {e}",
                         exc=e,
@@ -5054,6 +5105,14 @@ async def reminders_maintenance_loop(bot: Bot) -> None:
                         reply_markup=kb_reminder_missed(int(row["id"])),
                     )
                 except Exception as e:
+                    if telegram_user_unreachable(e):
+                        await _skip_unreachable_background_send(
+                            user_id,
+                            "missed reminder",
+                            e,
+                            disable_usage=True,
+                        )
+                        continue
                     report_console_error(
                         f"missed reminder send failed user_id={user_id} "
                         f"id={row.get('id')}: {e}",

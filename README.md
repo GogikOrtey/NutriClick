@@ -29,7 +29,7 @@ Telegram-бот для учёта калорий по фото и тексту
 ## Структура проекта
 
 ```
-NutriSnap_Twin_bot/
+NutriClick/
 ├── main.py                 # Точка входа: /start, меню, обёртки БД, фоновые циклы
 ├── food_recognition.py     # FSM: распознавание еды (Gemini + confirm UI)
 ├── initial_survey.py       # Первичный опрос профиля
@@ -49,8 +49,8 @@ NutriSnap_Twin_bot/
 ### 1. Клонировать и зависимости
 
 ```bash
-git clone <repo-url>
-cd NutriSnap_Twin_bot
+git clone git@github.com:GogikOrtey/NutriClick.git
+cd NutriClick
 python -m venv .venv
 
 # Windows
